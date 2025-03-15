@@ -275,7 +275,8 @@ def init_callback_handlers():
 pytesseract.pytesseract.tesseract_cmd = r"D:\tesseract\tesseract.exe"
 
 # --- API Endpoint ---
-OLLAMA_URL = "http://127.0.0.1:11434/api/generate"
+OLLAMA_URL =  "https://coderzz-ai.streamlit.app/api/generate"
+
 
 # --- Function to execute Python code ---
 def execute_python_code(code_to_execute):
