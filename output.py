@@ -987,6 +987,8 @@ def display_main_app():
             # Display a spinner while generating code
             with st.spinner("Generating code..."):
                 try:
+                    prompt = actions[action_idx].format(user_input)
+
                     # Generate code using LLaMA model directly
                     inputs = tokenizer(prompt, return_tensors="pt").to(device)
                     with torch.no_grad():
