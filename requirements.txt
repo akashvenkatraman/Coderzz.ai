@@ -7,4 +7,3 @@ pytesseract>=0.3.10
 Pillow>=9.0.0
 bcrypt>=3.2.0
 uuid>=1.30
-pyaudio
