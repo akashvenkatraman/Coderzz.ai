@@ -17,7 +17,25 @@ import sqlite3
 import bcrypt
 import os
 import uuid
+from transformers import AutoModelForCausalLM, AutoTokenizer
+import torch
+# Define your model name (as per your implementation)
+MODEL_NAME = "coderzz.ai"
 
+# Set the device to GPU if available, otherwise CPU
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+@st.cache_resource
+def load_model():
+    """Load the LLaMA model and tokenizer."""
+    tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME)
+    model = AutoModelForCausalLM.from_pretrained(MODEL_NAME)
+    model.to(device)
+    model.eval()
+    return model, tokenizer
+
+# Load the model and tokenizer
+model, tokenizer = load_model()
 # --- Initialize database on startup ---
 def init_db():
     """Initialize the SQLite database for user authentication."""
@@ -275,8 +293,7 @@ def init_callback_handlers():
 pytesseract.pytesseract.tesseract_cmd = r"D:\tesseract\tesseract.exe"
 
 # --- API Endpoint ---
-OLLAMA_URL =  "https://api.runpod.ai/v2/eqon1clbu33dw9/run/api/generate"
-
+OLLAMA_URL = "http://127.0.0.1:11434/api/generate"
 
 # --- Function to execute Python code ---
 def execute_python_code(code_to_execute):
@@ -948,7 +965,7 @@ def display_main_app():
             if text:
                 update_input_buffer(text)
     
-    # Submit button
+      # Submit button
     if st.button("Generate Code") or st.session_state.auto_submit:
         st.session_state.auto_submit = False  # Reset flag
         
@@ -959,7 +976,7 @@ def display_main_app():
         elif st.session_state.input_text_buffer:
             user_input = st.session_state.input_text_buffer
             
-            # Use reinforcement learning to select the best action template
+        # Use reinforcement learning to select the best action template
         if user_input:
             action_idx = get_action(st.session_state.Q_table)
             st.session_state.last_action_idx = action_idx
@@ -970,62 +987,57 @@ def display_main_app():
             # Display a spinner while generating code
             with st.spinner("Generating code..."):
                 try:
-                    # Call model API
-                    response = requests.post(
-                        OLLAMA_URL,
-                        json={
-                            "model": "coderzz.ai",
-                            "prompt": f"Generate {st.session_state.code_language} code for: {prompt}. Only return code with proper formatting and comments. Do not include explanations outside of code comments.",
-                            "stream": False,
-                            "temperature": st.session_state.temperature
-                        },
-                        timeout=30
-                    )
+                    # Generate code using LLaMA model directly
+                    inputs = tokenizer(prompt, return_tensors="pt").to(device)
+                    with torch.no_grad():
+                        outputs = model.generate(
+                            inputs.input_ids,
+                            max_length=150,
+                            temperature=st.session_state.temperature,
+                            num_return_sequences=1,
+                        )
+
+                    # Decode the generated code
+                    generated_code = tokenizer.decode(outputs[0], skip_special_tokens=True)
                     
-                    if response.status_code == 200:
-                        # Extract generated code
-                        generated_code = response.json().get("response", "").strip()
+                    # Only keep the code part if it's wrapped in ```
+                    if "```" in generated_code:
+                        code_blocks = generated_code.split("```")
+                        generated_code = "```" + code_blocks[1] + "```"
+                    
+                    # If language isn't specified in the user input, try to detect it
+                    if "code_language" not in st.session_state:
+                        st.session_state.code_language = detect_language(generated_code)
+                    
+                    # Store the generated code
+                    st.session_state.generated_code = generated_code
+                    
+                    # Add to chat history
+                    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                    st.session_state.chat_history.append(f"""
+                    <div style='background-color: #3B3B3B; 
+                         padding: 10px; border-radius: 5px; margin: 5px 0;'>
+                        <strong>You:</strong> <small>({timestamp})</small><br>{user_input}
+                    </div>
+                    """)
+                    st.session_state.chat_history.append(f"""
+                    <div style='background-color: #2D2D2D; 
+                         padding: 10px; border-radius: 5px; margin: 5px 0;'>
+                        <strong>Coderzz.AI:</strong> <small>({timestamp})</small><br>
+                        <pre><code>{generated_code}</code></pre>
+                    </div>
+                    """)
+
+                    # Save to database if authenticated
+                    if st.session_state.authenticated:
+                        save_chat_history(st.session_state.username, user_input, generated_code)
                         
-                        # Only keep the code part (remove explanations)
-                        if "```" in generated_code:
-                            code_blocks = generated_code.split("```")
-                            generated_code = "```" + code_blocks[1] + "```"
-                        
-                        # If language isn't specified in the user input, try to detect it
-                        if "code_language" not in st.session_state:
-                            st.session_state.code_language = detect_language(generated_code)
-                        
-                        # Store the generated code
-                        st.session_state.generated_code = generated_code
-                        
-                        # Add to chat history
-                        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                        st.session_state.chat_history.append(f"""
-                        <div style='background-color: #3B3B3B; 
-                             padding: 10px; border-radius: 5px; margin: 5px 0;'>
-                            <strong>You:</strong> <small>({timestamp})</small><br>{user_input}
-                        </div>
-                        """)
-                        st.session_state.chat_history.append(f"""
-                        <div style='background-color: #2D2D2D; 
-                             padding: 10px; border-radius: 5px; margin: 5px 0;'>
-                            <strong>Coderzz.AI:</strong> <small>({timestamp})</small><br>
-                            <pre><code>{generated_code}</code></pre>
-                        </div>
-                        """)
-                        
-                        # Save to database if authenticated
-                        if st.session_state.authenticated:
-                            save_chat_history(st.session_state.username, user_input, generated_code)
-                        
-                    else:
-                        st.error(f"Error: {response.status_code} - {response.text}")
                 except Exception as e:
                     st.error(f"Error generating code: {str(e)}")
-            
-            # Force rerun to update UI
-            st.session_state.needs_rerun = True
-    
+
+        # Force rerun to update UI
+        st.session_state.needs_rerun = True
+
     st.markdown('</div>', unsafe_allow_html=True)
     
     # Results section
